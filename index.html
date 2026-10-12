@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>France Info</title>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+<style>
+body{
+    margin:0;
+    height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    background:#111;
+}
+audio{
+    width:90%;
+    max-width:500px;
+}
+</style>
+</head>
+<body>
+
+<audio id="radio" controls autoplay></audio>
+
+<script>
+const url = "https://stream.radiofrance.fr/franceinfo/franceinfo_hifi.m3u8";
+const audio = document.getElementById("radio");
+
+if (audio.canPlayType("application/vnd.apple.mpegurl")) {
+    audio.src = url;
+} else if (Hls.isSupported()) {
+    const hls = new Hls();
+    hls.loadSource(url);
+    hls.attachMedia(audio);
+
+    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        audio.play().catch(()=>{});
+    });
+} else {
+    document.body.innerHTML = "HLS not supported";
+}
+</script>
+
+</body>
+</html>
