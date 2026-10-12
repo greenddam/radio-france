@@ -1,48 +1,108 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>France Info</title>
+<title>Radio France Player</title>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
 <style>
-body{
-    margin:0;
-    height:100vh;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    background:#111;
-}
-audio{
-    width:90%;
-    max-width:500px;
-}
+    body {
+    margin: 0;
+    background: #111;
+    color: #eee;
+    font-family: Arial, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    }
+
+    select {
+    font-size: 16px;
+    padding: 8px 12px;
+    background: #222;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    }
+
+    audio {
+    width: min(500px, 90vw);
+    }
+
 </style>
+  
 </head>
 <body>
 
-<audio id="radio" controls autoplay></audio>
+<select id="station">
+    <option value="https://stream.radiofrance.fr/franceinfo/franceinfo.m3u8">
+        France Info
+    </option>
+    <option value="https://stream.radiofrance.fr/franceinter/franceinter.m3u8">
+        France Inter
+    </option>
+    <option value="https://stream.radiofrance.fr/franceculture/franceculture.m3u8">
+        France Culture
+    </option>
+  <option value="https://stream.radiofrance.fr/francemusique/francemusique.m3u8">
+        France Musique
+    </option>
+</select>
+
+<audio id="player" controls></audio>
 
 <script>
-const url = "https://stream.radiofrance.fr/franceinfo/franceinfo_hifi.m3u8";
-const audio = document.getElementById("radio");
+const audio = document.getElementById("player");
+const station = document.getElementById("station");
 
-if (audio.canPlayType("application/vnd.apple.mpegurl")) {
-    audio.src = url;
-} else if (Hls.isSupported()) {
-    const hls = new Hls();
-    hls.loadSource(url);
-    hls.attachMedia(audio);
+let hls = null;
 
-    hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        audio.play().catch(()=>{});
-    });
-} else {
-    document.body.innerHTML = "HLS not supported";
+function loadStream(url) {
+
+    if (hls) {
+        hls.destroy();
+        hls = null;
+    }
+
+    // Safari
+    if (audio.canPlayType("application/vnd.apple.mpegurl")) {
+        audio.src = url;
+        audio.play().catch(() => {});
+        return;
+    }
+
+    // Chrome / Firefox / Edge
+    if (Hls.isSupported()) {
+        hls = new Hls({
+            lowLatencyMode: true
+        });
+
+        hls.loadSource(url);
+        hls.attachMedia(audio);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            audio.play().catch(() => {});
+        });
+
+        hls.on(Hls.Events.ERROR, (event, data) => {
+            console.error("HLS error:", data);
+        });
+    } else {
+        alert("HLS streaming is not supported by this browser.");
+    }
 }
+
+station.addEventListener("change", () => {
+    loadStream(station.value);
+});
+
+// Load default station
+loadStream(station.value);
 </script>
 
 </body>
