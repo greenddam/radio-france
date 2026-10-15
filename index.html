@@ -5,37 +5,36 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Radio France Player</title>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<!-- Pin major version so config options behave predictably -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 
 <style>
     body {
-    margin: 0;
-    background: #111;
-    color: #eee;
-    font-family: Arial, sans-serif;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    gap: 20px;
+        margin: 0;
+        background: #111;
+        color: #eee;
+        font-family: Arial, sans-serif;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 20px;
     }
 
     select {
-    font-size: 16px;
-    padding: 8px 12px;
-    background: #222;
-    color: #fff;
-    border: 1px solid #555;
-    border-radius: 4px;
+        font-size: 16px;
+        padding: 8px 12px;
+        background: #222;
+        color: #fff;
+        border: 1px solid #555;
+        border-radius: 4px;
     }
 
     audio {
-    width: min(500px, 90vw);
+        width: min(500px, 90vw);
     }
-
 </style>
-  
 </head>
 <body>
 
@@ -49,57 +48,122 @@
     <option value="https://stream.radiofrance.fr/franceculture/franceculture.m3u8">
         France Culture
     </option>
-  <option value="https://stream.radiofrance.fr/francemusique/francemusique.m3u8">
+    <option value="https://stream.radiofrance.fr/francemusique/francemusique.m3u8">
         France Musique
     </option>
 </select>
 
-<audio id="player" controls></audio>
+<audio id="player" controls preload="none"></audio>
 
 <script>
-const audio = document.getElementById("player");
+const audio   = document.getElementById("player");
 const station = document.getElementById("station");
 
 let hls = null;
 
-function loadStream(url) {
+/* ------------------------------------------------------------------
+ *  Memory-safe HLS configuration
+ *
+ *  The unbounded RAM growth in Firefox comes from the SourceBuffer:
+ *  by default hls.js keeps everything already played
+ *  (backBufferLength = 65535 s ≈ 18 h) plus up to 30 s ahead.
+ *  On a 24/7 live stream this never stops growing.
+ *
+ *  The settings below cap both directions, so memory stays flat at
+ *  roughly ~10 s behind + ~10 s ahead (a few MB), forever.
+ * ------------------------------------------------------------------ */
+const HLS_CONFIG = {
+    // --- back buffer (already-played data): THE fix for the RAM growth ---
+    // Anything older than this behind currentTime is evicted from the
+    // SourceBuffer right after each fragment is appended.
+    backBufferLength: 10,               // seconds (default: 65535)
 
+    // --- forward buffer (not-yet-played data) ---
+    maxBufferLength: 10,                // target ahead-buffer, seconds (default: 30)
+    maxMaxBufferLength: 20,             // absolute hard cap (default: 600)
+    maxBufferSize: 10 * 1000 * 1000,    // byte cap: 10 MB (default: 60 MB)
+
+    // --- live stream behaviour ---
+    lowLatencyMode: false,              // plain live HLS, no partial segments
+    liveSyncDurationCount: 3,           // stay ~3 segments behind the live edge
+    enableWorker: true                  // demux off the main thread
+};
+
+function destroyHls() {
     if (hls) {
         hls.destroy();
         hls = null;
     }
+}
 
-    // Safari
+function loadStream(url) {
+    destroyHls();
+    audio.pause();
+
+    // Safari / iOS: native HLS, the browser manages buffering itself
     if (audio.canPlayType("application/vnd.apple.mpegurl")) {
         audio.src = url;
         audio.play().catch(() => {});
         return;
     }
 
-    // Chrome / Firefox / Edge
-    if (Hls.isSupported()) {
-        hls = new Hls({
-            lowLatencyMode: true
-        });
-
-        hls.loadSource(url);
-        hls.attachMedia(audio);
-
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            audio.play().catch(() => {});
-        });
-
-        hls.on(Hls.Events.ERROR, (event, data) => {
-            console.error("HLS error:", data);
-        });
-    } else {
+    if (!Hls.isSupported()) {
         alert("HLS streaming is not supported by this browser.");
+        return;
     }
+
+    hls = new Hls(HLS_CONFIG);
+    hls.loadSource(url);
+    hls.attachMedia(audio);
+
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        audio.play().catch(() => {});
+    });
+
+    // Auto-recover from fatal errors instead of silently dying
+    hls.on(Hls.Events.ERROR, (event, data) => {
+        if (!data.fatal) return;
+        console.error("HLS fatal error:", data.type, data.details);
+        switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+                hls.startLoad();
+                break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+                hls.recoverMediaError();
+                break;
+            default:
+                destroyHls();
+        }
+    });
 }
+
+/* ------------------------------------------------------------------
+ *  Safety net: with the config above, the buffer should never exceed
+ *  ~30 s. If a browser quirk ever lets it grow anyway, hard-reset the
+ *  stream so RAM can never become unbounded.
+ * ------------------------------------------------------------------ */
+function totalBufferedSeconds() {
+    let total = 0;
+    for (let i = 0; i < audio.buffered.length; i++) {
+        total += audio.buffered.end(i) - audio.buffered.start(i);
+    }
+    return total;
+}
+
+setInterval(() => {
+    if (!hls || audio.paused || audio.seeking) return;
+    const buffered = totalBufferedSeconds();
+    if (buffered > 120) { // way beyond the normal ~30 s
+        console.warn(`Buffer at ${buffered.toFixed(0)} s — resetting stream.`);
+        loadStream(station.value);
+    }
+}, 30000);
 
 station.addEventListener("change", () => {
     loadStream(station.value);
 });
+
+window.addEventListener("beforeunload", destroyHls);
 
 // Load default station
 loadStream(station.value);
